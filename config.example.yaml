@@ -1,0 +1,21 @@
+app_name: RTSP Recorder
+environment: production
+database_path: data/rtsp_recorder.sqlite3
+recording_path: recordings
+log_path: logs
+retention_days: 30
+minimum_free_disk_gb: 5
+ffmpeg_binary: ffmpeg
+ffprobe_binary: ffprobe
+restart_delay_seconds: 5
+segment_duration_seconds: 900
+watchdog_interval_seconds: 5
+file_stale_seconds: 120
+cleanup_interval_seconds: 3600
+web_host: 0.0.0.0
+web_port: 8000
+logging_level: INFO
+cors_origins:
+  - http://localhost:5173
+  - http://127.0.0.1:5173
+

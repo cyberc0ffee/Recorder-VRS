@@ -1,0 +1,18 @@
+[Unit]
+Description=RTSP Recorder
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/rtsp-recorder
+Environment=RTSP_RECORDER_CONFIG=/opt/rtsp-recorder/config.yaml
+ExecStart=/opt/rtsp-recorder/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --app-dir backend
+Restart=always
+RestartSec=5
+User=rtsp-recorder
+Group=rtsp-recorder
+
+[Install]
+WantedBy=multi-user.target
+

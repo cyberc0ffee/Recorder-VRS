@@ -1,0 +1,13 @@
+services:
+  rtsp-recorder:
+    build: .
+    container_name: rtsp-recorder
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./recordings:/app/recordings
+
