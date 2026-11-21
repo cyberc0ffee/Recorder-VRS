@@ -3,7 +3,11 @@
     <section class="metrics-grid">
       <MetricTile :icon="Cpu" label="CPU" :value="formatPercent(system?.cpu_percent)" />
       <MetricTile :icon="MemoryStick" label="RAM" :value="formatPercent(system?.ram?.percent)" />
-      <MetricTile :icon="HardDrive" label="Disk Free" :value="formatBytes(system?.disk?.free_bytes)" />
+      <MetricTile
+        :icon="HardDrive"
+        label="Disk Free"
+        :value="`${formatBytes(system?.disk?.free_bytes)}${system?.disk?.below_threshold ? ' (low)' : ''}`"
+      />
       <MetricTile :icon="Radio" label="Recording" :value="system?.recording_cameras ?? 0" />
       <MetricTile :icon="Wifi" label="Online" :value="system?.cameras_online ?? 0" />
       <MetricTile :icon="WifiOff" label="Offline" :value="system?.cameras_offline ?? 0" />
@@ -21,10 +25,7 @@
             <h3>{{ camera.name }}</h3>
             <p>{{ hostFromUrl(camera.rtsp_url) }}</p>
           </div>
-          <StatusPill
-            :label="camera.status.recording ? 'Recording' : camera.status.online ? 'Online' : 'Offline'"
-            :variant="camera.status.recording ? 'success' : camera.status.online ? 'info' : 'danger'"
-          />
+          <StatusPill :label="cameraState(camera.status).label" :variant="cameraState(camera.status).variant" />
         </article>
       </div>
     </section>
@@ -56,7 +57,7 @@ import { Cpu, HardDrive, MemoryStick, Radio, Wifi, WifiOff } from "lucide-vue-ne
 import MetricTile from "../components/MetricTile.vue";
 import StatusPill from "../components/StatusPill.vue";
 import { useRecorderStore } from "../stores/recorder";
-import { formatBytes, formatDate, formatPercent, hostFromUrl } from "../utils/formatters";
+import { cameraState, formatBytes, formatDate, formatPercent, hostFromUrl } from "../utils/formatters";
 
 const store = useRecorderStore();
 const system = computed(() => store.system);

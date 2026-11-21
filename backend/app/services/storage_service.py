@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import shutil
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.core.config import Settings
 from app.models.domain import Camera
 from app.utils.paths import ensure_directory, slugify_filename
+
+GB = 1024**3
 
 
 @dataclass(frozen=True)
@@ -29,7 +31,7 @@ class StorageService:
 
     def disk_stats(self) -> DiskStats:
         usage = shutil.disk_usage(self.settings.recording_path)
-        minimum_free_bytes = int(self.settings.minimum_free_disk_gb * 1024 * 1024 * 1024)
+        minimum_free_bytes = int(self.settings.minimum_free_disk_gb * GB)
         free_percent = (usage.free / usage.total * 100) if usage.total else 0.0
         return DiskStats(
             total_bytes=usage.total,
@@ -43,15 +45,16 @@ class StorageService:
     def has_minimum_free_space(self) -> bool:
         return not self.disk_stats().below_threshold
 
-    def old_recording_files(self) -> list[Path]:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=self.settings.retention_days)
-        old_files: list[Path] = []
-        for file_path in self.settings.recording_path.rglob("*.mkv"):
+    def recording_files(self) -> list[tuple[float, Path]]:
+        """(mtime, path) of every recording, oldest first."""
+        files: list[tuple[float, Path]] = []
+        for path in self.settings.recording_path.rglob("*.mkv"):
             try:
-                modified_at = datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc)
-            except FileNotFoundError:
+                files.append((path.stat().st_mtime, path.resolve()))
+            except OSError:
                 continue
-            if modified_at < cutoff:
-                old_files.append(file_path)
-        return old_files
+        return sorted(files)
 
+    def old_recording_files(self) -> list[Path]:
+        cutoff = (datetime.now(UTC) - timedelta(days=self.settings.retention_days)).timestamp()
+        return [path for mtime, path in self.recording_files() if mtime < cutoff]

@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from "vue-router";
 
+import AccountView from "../views/AccountView.vue";
 import CamerasView from "../views/CamerasView.vue";
 import DashboardView from "../views/DashboardView.vue";
 import EventsView from "../views/EventsView.vue";
@@ -11,7 +12,8 @@ const router = createRouter({
     { path: "/", name: "dashboard", component: DashboardView },
     { path: "/cameras", name: "cameras", component: CamerasView },
     { path: "/recordings", name: "recordings", component: RecordingsView },
-    { path: "/events", name: "events", component: EventsView }
+    { path: "/events", name: "events", component: EventsView },
+    { path: "/account", name: "account", component: AccountView }
   ]
 });
 

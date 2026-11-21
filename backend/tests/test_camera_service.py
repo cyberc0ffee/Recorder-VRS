@@ -22,4 +22,3 @@ def test_camera_crud(tmp_path: Path) -> None:
     assert updated.enabled is False
     assert service.delete_camera(camera.id) is True
     assert service.get_camera(camera.id) is None
-

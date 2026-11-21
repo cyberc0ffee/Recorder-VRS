@@ -26,7 +26,7 @@ def test_ffmpeg_command_uses_copy_tcp_segmented_mkv(tmp_path: Path) -> None:
     assert "segment" in command
     assert "-segment_format" in command
     assert "matroska" in command
-    assert "Entrance_%Y-%m-%d_%H-%M-%S.mkv" in command[-1]
+    assert "Entrance_%Y-%m-%d_%H-%M-%SZ.mkv" in command[-1]
 
 
 def test_segment_pattern_sanitizes_camera_name(tmp_path: Path) -> None:
@@ -41,5 +41,4 @@ def test_segment_pattern_sanitizes_camera_name(tmp_path: Path) -> None:
 
     pattern = build_segment_pattern(camera, tmp_path)
 
-    assert pattern.name == "Front_Door_East_%Y-%m-%d_%H-%M-%S.mkv"
-
+    assert pattern.name == "Front_Door_East_%Y-%m-%d_%H-%M-%SZ.mkv"

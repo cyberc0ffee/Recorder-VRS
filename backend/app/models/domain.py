@@ -31,4 +31,3 @@ class Recording:
     size: int
     start_time: str | None
     end_time: str | None
-

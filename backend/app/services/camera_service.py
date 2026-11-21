@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from sqlite3 import Row
 
 from app.core.database import Database
+from app.core.security import keep_stored_password
 from app.models.domain import Camera
+from app.utils.paths import slugify_filename
 
 
 def _row_to_camera(row: Row) -> Camera:
@@ -31,6 +33,13 @@ class CameraService:
         row = self.database.fetch_one("SELECT * FROM cameras WHERE id = ?", (camera_id,))
         return _row_to_camera(row) if row is not None else None
 
+    def _check_directory_name(self, name: str, camera_id: int | None = None) -> None:
+        """Two cameras must never share a recording directory ("Front Door" vs "Front_Door")."""
+        slug = slugify_filename(name).lower()
+        for other in self.list_cameras():
+            if other.id != camera_id and slugify_filename(other.name).lower() == slug:
+                raise ValueError(f"Camera name too similar to existing camera: {other.name}")
+
     def create_camera(
         self,
         name: str,
@@ -38,14 +47,16 @@ class CameraService:
         enabled: bool = True,
         autostart: bool = True,
     ) -> Camera:
-        created_at = datetime.now(timezone.utc).isoformat()
+        name = name.strip()
+        self._check_directory_name(name)
+        created_at = datetime.now(UTC).isoformat()
         try:
             camera_id = self.database.execute(
                 """
                 INSERT INTO cameras (name, rtsp_url, enabled, autostart, created_at)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (name.strip(), rtsp_url.strip(), int(enabled), int(autostart), created_at),
+                (name, rtsp_url.strip(), int(enabled), int(autostart), created_at),
             )
         except sqlite3.IntegrityError as exc:
             raise ValueError(f"Camera name already exists: {name}") from exc
@@ -68,9 +79,13 @@ class CameraService:
             return None
 
         next_name = existing.name if name is None else name.strip()
-        next_url = existing.rtsp_url if rtsp_url is None else rtsp_url.strip()
+        next_url = existing.rtsp_url
+        if rtsp_url is not None:
+            # the API only ever shows masked URLs: a masked password means "unchanged"
+            next_url = keep_stored_password(rtsp_url.strip(), existing.rtsp_url)
         next_enabled = existing.enabled if enabled is None else enabled
         next_autostart = existing.autostart if autostart is None else autostart
+        self._check_directory_name(next_name, camera_id)
 
         try:
             self.database.execute(
@@ -87,19 +102,12 @@ class CameraService:
         return self.get_camera(camera_id)
 
     def delete_camera(self, camera_id: int) -> bool:
-        existing = self.get_camera(camera_id)
-        if existing is None:
-            return False
-        self.database.execute("DELETE FROM cameras WHERE id = ?", (camera_id,))
-        return True
+        return self.database.execute_rowcount("DELETE FROM cameras WHERE id = ?", (camera_id,)) > 0
 
     def list_autostart_cameras(self) -> list[Camera]:
-        rows = self.database.fetch_all(
-            """
+        rows = self.database.fetch_all("""
             SELECT * FROM cameras
             WHERE enabled = 1 AND autostart = 1
             ORDER BY name COLLATE NOCASE
-            """
-        )
+            """)
         return [_row_to_camera(row) for row in rows]
-

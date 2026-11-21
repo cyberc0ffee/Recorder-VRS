@@ -5,9 +5,21 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+    environment:
+      # segment file names use the local time of this zone
+      TZ: ${TZ:-Europe/Rome}
+      # password of the first administrator (only used when the database has no users);
+      # if empty, a random one is written to ./data/initial_admin_password.txt
+      RTSP_RECORDER_ADMIN_PASSWORD: ${RTSP_RECORDER_ADMIN_PASSWORD:-}
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./data:/app/data
       - ./logs:/app/logs
       - ./recordings:/app/recordings
-
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

@@ -10,6 +10,9 @@
         <label class="url-field">
           <span>RTSP URL</span>
           <input v-model.trim="form.rtsp_url" required placeholder="rtsp://user:pass@192.168.1.20:554/stream1" />
+          <small v-if="editingCameraId && form.rtsp_url.includes(':***@')" class="muted">
+            The stored password is kept while it is shown as ***; type a new one to change it.
+          </small>
         </label>
 
         <label class="toggle-line">
@@ -52,7 +55,7 @@
               <th>Host</th>
               <th>Status</th>
               <th>Restarts</th>
-              <th>Last Error</th>
+              <th>Last Error / ffmpeg</th>
               <th class="actions-col">Actions</th>
             </tr>
           </thead>
@@ -64,13 +67,16 @@
               </td>
               <td>{{ hostFromUrl(camera.rtsp_url) }}</td>
               <td>
-                <StatusPill
-                  :label="camera.status.recording ? 'Recording' : camera.status.online ? 'Online' : 'Offline'"
-                  :variant="camera.status.recording ? 'success' : camera.status.online ? 'info' : 'danger'"
-                />
+                <StatusPill :label="cameraState(camera.status).label" :variant="cameraState(camera.status).variant" />
+                <small v-if="camera.status.next_retry_at">retry {{ formatDate(camera.status.next_retry_at) }}</small>
               </td>
               <td>{{ camera.status.restart_count }}</td>
-              <td class="error-cell">{{ camera.status.last_error || "-" }}</td>
+              <td class="error-cell">
+                {{ camera.status.last_error || "-" }}
+                <small v-if="camera.status.last_ffmpeg_message && camera.status.last_ffmpeg_message !== camera.status.last_error">
+                  {{ camera.status.last_ffmpeg_message }}
+                </small>
+              </td>
               <td>
                 <div class="row-actions">
                   <button class="icon-button" type="button" title="Start" @click="store.startCamera(camera.id)">
@@ -101,7 +107,7 @@ import { Pencil, Play, RefreshCw, Save, Square, Trash2, X } from "lucide-vue-nex
 
 import StatusPill from "../components/StatusPill.vue";
 import { useRecorderStore } from "../stores/recorder";
-import { hostFromUrl } from "../utils/formatters";
+import { cameraState, formatDate, hostFromUrl } from "../utils/formatters";
 
 const store = useRecorderStore();
 const editingCameraId = ref(null);
@@ -135,19 +141,26 @@ async function submitCamera() {
     enabled: form.enabled,
     autostart: form.autostart
   };
-  if (editingCameraId.value) {
-    await store.updateCamera(editingCameraId.value, payload);
-  } else {
-    await store.createCamera(payload);
+  try {
+    if (editingCameraId.value) {
+      await store.updateCamera(editingCameraId.value, payload);
+    } else {
+      await store.createCamera(payload);
+    }
+    resetForm();
+  } catch {
+    // the error is shown by the app banner; keep the form as it is
   }
-  resetForm();
 }
 
 async function deleteCamera(camera) {
-  const confirmed = window.confirm(`Delete camera "${camera.name}"?`);
-  if (confirmed) {
-    await store.deleteCamera(camera.id);
-  }
+  if (!window.confirm(`Delete camera "${camera.name}"?`)) return;
+  const deleteRecordings = window.confirm(
+    `Also delete all recordings of "${camera.name}"?
+
+OK = delete them, Cancel = keep the files on disk.`
+  );
+  await store.deleteCamera(camera.id, deleteRecordings).catch(() => {});
 }
 </script>
 

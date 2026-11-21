@@ -45,4 +45,3 @@ class SystemService:
             "recording_cameras": recording_count,
             "workers": worker_statuses,
         }
-

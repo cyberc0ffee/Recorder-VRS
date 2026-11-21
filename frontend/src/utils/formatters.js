@@ -23,6 +23,16 @@ export function formatDate(value) {
   }).format(new Date(value));
 }
 
+export function formatDuration(seconds) {
+  if (seconds === null || seconds === undefined) return "-";
+  const total = Math.round(Number(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
 export function hostFromUrl(value) {
   try {
     return new URL(value).host;
@@ -31,3 +41,13 @@ export function hostFromUrl(value) {
   }
 }
 
+const STATES = {
+  recording: { label: "Recording", variant: "success" },
+  starting: { label: "Connecting", variant: "info" },
+  reconnecting: { label: "Reconnecting", variant: "warning" },
+  stopped: { label: "Stopped", variant: "neutral" }
+};
+
+export function cameraState(status) {
+  return STATES[status?.state] || { label: "Offline", variant: "danger" };
+}

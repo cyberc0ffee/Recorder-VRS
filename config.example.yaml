@@ -1,21 +1,41 @@
 app_name: RTSP Recorder
 environment: production
+
+# paths (relative paths are resolved from the working directory at startup)
 database_path: data/rtsp_recorder.sqlite3
 recording_path: recordings
 log_path: logs
+
+# retention and storage
 retention_days: 30
 minimum_free_disk_gb: 5
+# below the minimum, the oldest recordings are deleted until free space >= minimum + margin
+free_disk_margin_gb: 1
+disk_check_interval_seconds: 60
+cleanup_interval_seconds: 3600
+event_retention_days: 30
+max_events: 20000
+
+# ffmpeg (version 5 or later) and watchdog
 ffmpeg_binary: ffmpeg
 ffprobe_binary: ffprobe
-restart_delay_seconds: 5
 segment_duration_seconds: 900
+restart_delay_seconds: 5
+# failed restarts wait twice as long each time, up to this limit
+max_restart_delay_seconds: 300
 watchdog_interval_seconds: 5
 file_stale_seconds: 120
-cleanup_interval_seconds: 3600
+rtsp_timeout_seconds: 10
+
+# web server and authentication
 web_host: 0.0.0.0
 web_port: 8000
-logging_level: INFO
-cors_origins:
-  - http://localhost:5173
-  - http://127.0.0.1:5173
+admin_username: admin
+session_hours: 12
+# true when the dashboard is served over HTTPS (reverse proxy)
+cookie_secure: false
+# only needed when the frontend is served from another origin (e.g. the Vite dev server
+# without proxy); the default setup serves everything from the same origin
+cors_origins: []
 
+logging_level: INFO
