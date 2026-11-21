@@ -256,7 +256,7 @@ class CameraWorker:
             self._finalize_current_file()
             with self._lock:
                 self._state.current_file = str(newest.resolve())
-            self._last_known_size = -1
+            self._last_known_size = 0  # a just-created empty file is not progress yet
             self._last_index = float("-inf")
 
         if size > self._last_known_size:
@@ -325,6 +325,15 @@ class CameraWorker:
             return
         with self._lock:
             self._state.current_file = None
+        try:
+            empty = current.stat().st_size == 0
+        except OSError:
+            return
+        if empty:
+            # segment opened just before ffmpeg stopped: nothing to keep
+            current.unlink(missing_ok=True)
+            self.recording_service.delete_by_filename(str(current.resolve()))
+            return
         if current.exists():
             self.recording_service.index_file(
                 self.camera.id, current, self.probe(self.settings, current)

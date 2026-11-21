@@ -122,3 +122,15 @@ def test_stall_time_does_not_count_as_stable_recording(make_worker) -> None:
     assert worker._recorded_for() == 10.0
     worker._recording_since = None
     assert worker._recorded_for() == 0.0
+
+
+def test_empty_last_segment_is_discarded(make_worker, database: Database) -> None:
+    worker = make_worker("record")
+    worker.output_dir.mkdir(parents=True, exist_ok=True)
+    empty = worker.output_dir / "Gate_2026-07-10_14-15-00Z.mkv"
+    empty.write_bytes(b"")
+    worker.recording_service.index_file(worker.camera.id, empty)
+    worker._state.current_file = str(empty)
+    worker._finalize_current_file()
+    assert not empty.exists()
+    assert worker.recording_service.list_recordings() == []
