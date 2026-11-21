@@ -8,7 +8,8 @@ RUN npm run build
 FROM python:3.12-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    RTSP_RECORDER_CONFIG=/app/config.yaml \n    PYTHONPATH=/app/backend
+    RTSP_RECORDER_CONFIG=/app/config.yaml \
+    PYTHONPATH=/app/backend
 
 WORKDIR /app
 RUN apt-get update \

@@ -31,15 +31,24 @@ jobs:
         run: |
           docker run -d --name mediamtx -p 8554:8554 bluenviron/mediamtx:1.9.3
           sleep 3
-          nohup ffmpeg -hide_banner -loglevel error -re \
+          # TCP: only port 8554 is published, RTP over UDP would never reach MediaMTX
+          nohup ffmpeg -hide_banner -loglevel warning -re \
             -f lavfi -i testsrc=size=320x240:rate=10 \
             -c:v libx264 -preset ultrafast -tune zerolatency -g 10 \
-            -f rtsp rtsp://127.0.0.1:8554/test > publisher.log 2>&1 &
+            -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/test > publisher.log 2>&1 &
           sleep 3
+          # fail here, with a clear message, if the stream is not readable
+          ffprobe -v error -rtsp_transport tcp -show_entries stream=codec_name,width,height \
+            rtsp://127.0.0.1:8554/test
       - name: Tests
         env:
           RTSP_TEST_URL: rtsp://127.0.0.1:8554/test
         run: pytest -v --cov=app --cov-report=term-missing --cov-fail-under=80
+      - name: Test stream logs
+        if: failure()
+        run: |
+          cat publisher.log || true
+          docker logs mediamtx || true
 
   frontend:
     runs-on: ubuntu-latest
