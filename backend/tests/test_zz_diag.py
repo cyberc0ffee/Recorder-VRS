@@ -31,7 +31,7 @@ def _run(url: str, out: Path, maps: list[str], extra: list[str]) -> str:
     cmd = [
         "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "verbose", "-rtsp_transport", "tcp",
         "-timeout", "3000000", "-i", url, *maps, "-c", "copy", *extra,
-        "-f", "segment", "-segment_time", "20", "-segment_atclocktime", "1",
+        "-f", "segment", "-segment_time", "60", "-segment_atclocktime", "1",
         "-reset_timestamps", "1", "-strftime", "1", "-segment_format", "matroska",
         str(out / "s_%Y-%m-%d_%H-%M-%SZ.mkv"),
     ]  # fmt: skip
@@ -42,8 +42,8 @@ def _run(url: str, out: Path, maps: list[str], extra: list[str]) -> str:
         )
         lines = []
         start = time.monotonic()
-        while time.monotonic() - start < 9:
-            time.sleep(0.5)
+        while time.monotonic() - start < 30:
+            time.sleep(1)
             sizes = {f.name[-13:-4]: f.stat().st_size for f in sorted(out.glob("*.mkv"))}
             lines.append(f"{time.monotonic() - start:4.1f} {sizes}")
         p.terminate()
@@ -51,8 +51,13 @@ def _run(url: str, out: Path, maps: list[str], extra: list[str]) -> str:
     tail = [
         line
         for line in log.read_text().splitlines()
-        if "Stream" in line or "rror" in line or "arn" in line.lower()
-    ][:25]
+        if "Stream" in line
+        or "rror" in line
+        or "arn" in line.lower()
+        or "out_time=" in line
+        or "total_size" in line
+        or "frame=" in line
+    ][:40]
     return "\n".join([" ".join(maps + extra)] + lines + tail)
 
 
@@ -62,12 +67,20 @@ def test_diag(tmp_path: Path) -> None:
     try:
         time.sleep(3)
         reports = [
-            _run(url, tmp_path / "a", ["-map", "0:v"], []),
+            _run(RTSP_TEST_URL, tmp_path / "a", ["-map", "0:v"], []),
             _run(url, tmp_path / "b", ["-map", "0:v", "-map", "0:a?"], []),
             _run(
-                url, tmp_path / "c", ["-map", "0:v", "-map", "0:a?"], ["-max_interleave_delta", "0"]
+                url,
+                tmp_path / "c",
+                ["-map", "0:v", "-map", "0:a?"],
+                ["-segment_format_options", "flush_packets=1"],
             ),
-            _run(url, tmp_path / "d", ["-map", "0:v", "-map", "0:a?"], ["-flush_packets", "1"]),
+            _run(
+                url,
+                tmp_path / "d",
+                ["-map", "0:v", "-map", "0:a?"],
+                ["-progress", "pipe:2", "-stats_period", "5"],
+            ),
         ]
     finally:
         publisher.kill()
