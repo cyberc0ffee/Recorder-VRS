@@ -66,7 +66,7 @@ def _publish(url: str) -> subprocess.Popen[bytes]:
     """A camera like most real ones: H.264 video and G.711 audio."""
     return subprocess.Popen(
         [
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-re",
+            "ffmpeg", "-hide_banner", "-loglevel", "warning", "-re",
             "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10",
             "-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=8000",
             "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-g", "10",
@@ -111,6 +111,13 @@ def test_recording_resumes_when_the_camera_comes_back(
         publisher = _publish(url)  # ...and comes back
         wait_until(lambda: worker.status()["state"] == "recording", timeout=30)
         time.sleep(4)
+    except AssertionError:
+        print("worker status:", worker.status())
+        if worker.ffmpeg_log_path.exists():
+            print(worker.ffmpeg_log_path.read_text(encoding="utf-8")[-4000:])
+        for path in sorted(worker.output_dir.glob("*.mkv")):
+            print(path.name, path.stat().st_size)
+        raise
     finally:
         worker.stop()
         _stop(publisher)
