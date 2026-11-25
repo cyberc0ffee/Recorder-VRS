@@ -141,6 +141,9 @@ Recording is designed to keep going on its own, and to tell you when it cannot:
 * **Supervisor.** Every 30 s, each camera that should be recording and is not gets started
   again: a start refused because the disk was full, a restart that failed after editing the
   camera, or a worker that ended unexpectedly. Only an explicit Stop ends recording.
+* **Every packet reaches the disk at once.** ffmpeg would otherwise buffer 256 KB, which a
+  low-bitrate stream (H.265+ on a still scene, a substream) can take minutes to fill: the file
+  would look stalled and a power cut would lose that video.
 * **Only video and audio are recorded.** Data tracks (ONVIF metadata) would make the MKV header
   fail. If a camera's audio track causes errors, set `record_audio: false`.
 * **The service itself** is restarted by systemd (`Restart=always`) or Docker

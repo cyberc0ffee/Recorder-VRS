@@ -168,3 +168,17 @@ def test_only_video_and_audio_are_recorded(tmp_path: Path) -> None:
     assert maps == ["0:v", "0:a?"]  # no data tracks (ONVIF metadata)
     command = build_ffmpeg_command(Settings(record_audio=False), camera, tmp_path)
     assert [command[i + 1] for i, arg in enumerate(command) if arg == "-map"] == ["0:v"]
+
+
+def test_segments_are_written_to_disk_packet_by_packet(tmp_path: Path) -> None:
+    camera = Camera(
+        id=1,
+        name="Gate",
+        rtsp_url="rtsp://h/live",
+        enabled=True,
+        autostart=True,
+        created_at="2026-07-10T00:00:00+00:00",
+    )
+    command = build_ffmpeg_command(Settings(), camera, tmp_path)
+    options = command[command.index("-segment_format_options") + 1]
+    assert options == "flush_packets=1"  # no 256 KB buffer: the watchdog sees steady growth

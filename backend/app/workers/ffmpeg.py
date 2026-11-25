@@ -64,6 +64,12 @@ def build_ffmpeg_command(settings: Settings, camera: Camera, output_dir: Path) -
         "1",
         "-segment_format",
         "matroska",
+        # write every packet to disk at once: otherwise the MKV muxer buffers 256 KB, which
+        # a low-bitrate stream (H.265+ static scene, substream) can take minutes to fill. The
+        # watchdog would see a stalled file and restart a working recording, and a power cut
+        # would lose the buffered video.
+        "-segment_format_options",
+        "flush_packets=1",
         str(output_pattern),
     ]
 
