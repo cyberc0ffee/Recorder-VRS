@@ -60,3 +60,71 @@ def test_records_segments_from_a_real_stream(settings: Settings, database: Datab
         build_playback_command(settings, source), capture_output=True, timeout=30, check=True
     ).stdout
     assert output[4:8] == b"ftyp"
+
+
+def _publish(url: str) -> subprocess.Popen[bytes]:
+    """A camera like most real ones: H.264 video and G.711 audio."""
+    return subprocess.Popen(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-re",
+            "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10",
+            "-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=8000",
+            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-g", "10",
+            "-c:a", "pcm_mulaw",
+            "-f", "rtsp", "-rtsp_transport", "tcp", url,
+        ],
+        stdin=subprocess.DEVNULL,
+    )  # fmt: skip
+
+
+def _stop(process: subprocess.Popen[bytes]) -> None:
+    process.kill()
+    process.wait(timeout=10)
+
+
+def test_recording_resumes_when_the_camera_comes_back(
+    settings: Settings, database: Database
+) -> None:
+    url = RTSP_TEST_URL.rsplit("/", 1)[0] + "/flaky"
+    settings = settings.model_copy(
+        update={
+            "segment_duration_seconds": 3,
+            "watchdog_interval_seconds": 0.5,
+            "file_stale_seconds": 10,
+            "restart_delay_seconds": 1,
+            "max_restart_delay_seconds": 2,
+            "rtsp_timeout_seconds": 3,
+        }
+    )
+    events = EventService(database)
+    recordings = RecordingService(database, settings.recording_path)
+    camera = CameraService(database).create_camera("Flaky", url)
+    worker = CameraWorker(camera, settings, StorageService(settings), events, recordings)
+    publisher = _publish(url)
+    worker.start()
+    try:
+        wait_until(lambda: worker.status()["state"] == "recording", timeout=30)
+        time.sleep(4)
+        _stop(publisher)  # the camera disappears
+        wait_until(lambda: worker.status()["state"] == "reconnecting", timeout=30)
+        time.sleep(5)  # several failed attempts while it is away
+        publisher = _publish(url)  # ...and comes back
+        wait_until(lambda: worker.status()["state"] == "recording", timeout=30)
+        time.sleep(4)
+    finally:
+        worker.stop()
+        _stop(publisher)
+
+    messages = [e.message for e in events.list_recent(100)]
+    assert sum("Recording interrupted" in m for m in messages) == 1  # one event per outage
+    assert any("Recording resumed for Flaky" in m for m in messages)
+    finished = recordings.list_recordings(camera_id=camera.id)
+    assert len(finished) >= 2 and all(r.size > 0 for r in finished)
+    # audio is kept: every segment has a video and an audio track
+    for recording in finished:
+        streams = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0",
+             str(recordings.file_path(recording))],
+            capture_output=True, text=True, timeout=30, check=True,
+        ).stdout.split()  # fmt: skip
+        assert sorted(streams) == ["audio", "video"], recording.filename

@@ -132,5 +132,6 @@ def test_empty_last_segment_is_discarded(make_worker, database: Database) -> Non
     worker.recording_service.index_file(worker.camera.id, empty)
     worker._state.current_file = str(empty)
     worker._finalize_current_file()
+    worker._join_finalizers(timeout=5)
     assert not empty.exists()
     assert worker.recording_service.list_recordings() == []

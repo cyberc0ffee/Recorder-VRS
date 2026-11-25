@@ -9,7 +9,8 @@ Lightweight Python/Vue Network Video Recorder for continuous RTSP recording with
   protection, throttling of failed logins)
 * Camera passwords never leave the server: the API and the logs show `rtsp://user:***@host`
 * Dedicated ffmpeg worker per camera with a watchdog: restart on exit or when the file stops
-  growing, exponential back-off, one event per outage instead of one per retry
+  growing, exponential back-off, one event per outage instead of one per retry; a supervisor
+  restarts any camera that should be recording and is not (see [Reliability](#reliability))
 * MKV segments with codec copy, aligned to the clock (14:00, 14:15, …)
 * Retention by age **and** by free space: below the minimum the oldest recordings are deleted
   first; files being written are never touched
@@ -90,7 +91,7 @@ retention_days: 30
 minimum_free_disk_gb: 20       # below this, the oldest recordings are deleted
 free_disk_margin_gb: 2         # ...until free space is back above minimum + margin
 segment_duration_seconds: 900
-restart_delay_seconds: 5       # first retry; doubles up to max_restart_delay_seconds
+restart_delay_seconds: 2       # first retry; doubles up to max_restart_delay_seconds (60)
 cookie_secure: true            # when served over HTTPS
 ```
 
@@ -119,11 +120,36 @@ GET    /api/recordings?camera_id=&start=&end=&limit=
 GET    /api/recordings/{id}/download | /stream (MKV) | /play (MP4)
 DELETE /api/recordings/{id}
 GET    /api/system                  GET  /api/events?limit=&camera_id=
-POST   /api/cleanup                 GET  /health
+POST   /api/cleanup                 GET  /health      GET /health/recording
 ```
 
 Camera states: `stopped`, `starting`, `recording` (the segment file is growing),
 `reconnecting` (waiting before the next attempt; see `next_retry_at` and `last_error`).
+
+## Reliability
+
+Recording is designed to keep going on its own, and to tell you when it cannot:
+
+* **Camera or network down.** ffmpeg gives up after `rtsp_timeout_seconds` without data and is
+  restarted after 2 s, then 4, 8… up to `max_restart_delay_seconds` (60 s): that is also the
+  longest gap after the camera comes back. A stream that stays connected but stops sending
+  video is restarted when the segment has not grown for `file_stale_seconds`.
+* **Nothing around the recording can stop it.** Database errors (locked, disk full), a log
+  that cannot be written and internal errors are logged, and ffmpeg keeps writing; at worst
+  ffmpeg is restarted. Segment durations are read in the background, so a restart never waits
+  for them.
+* **Supervisor.** Every 30 s, each camera that should be recording and is not gets started
+  again: a start refused because the disk was full, a restart that failed after editing the
+  camera, or a worker that ended unexpectedly. Only an explicit Stop ends recording.
+* **Only video and audio are recorded.** Data tracks (ONVIF metadata) would make the MKV header
+  fail. If a camera's audio track causes errors, set `record_audio: false`.
+* **The service itself** is restarted by systemd (`Restart=always`) or Docker
+  (`restart: unless-stopped`); ffmpeg segments are MKV, readable even after a power failure.
+
+**Monitoring.** `GET /health/recording` answers `200 {"status": "ok", "expected": 3,
+"recording": 3}` when every camera that should record is recording, and **503** otherwise (no
+login needed, it only returns these counters). Point an external monitor at it (Uptime Kuma,
+Zabbix, Healthchecks…) to be alerted; allow a minute after a start or a camera restart.
 
 ## Tests and lint
 

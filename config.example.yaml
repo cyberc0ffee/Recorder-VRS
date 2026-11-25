@@ -20,12 +20,18 @@ max_events: 20000
 ffmpeg_binary: ffmpeg
 ffprobe_binary: ffprobe
 segment_duration_seconds: 900
-restart_delay_seconds: 5
-# failed restarts wait twice as long each time, up to this limit
-max_restart_delay_seconds: 300
+restart_delay_seconds: 2
+# failed restarts wait twice as long each time, up to this limit: it is also the longest
+# gap after a camera comes back, so keep it short
+max_restart_delay_seconds: 60
 watchdog_interval_seconds: 5
+# restart ffmpeg when the segment has not grown for this long (keep it above the longest
+# keyframe interval of your cameras)
 file_stale_seconds: 120
+# ffmpeg gives up when the camera sends nothing for this long
 rtsp_timeout_seconds: 10
+# false: video only (for cameras whose audio track breaks the recording)
+record_audio: true
 
 # web server and authentication
 web_host: 0.0.0.0

@@ -32,12 +32,13 @@ class Settings(BaseModel):
     # ffmpeg and watchdog
     ffmpeg_binary: str = "ffmpeg"
     ffprobe_binary: str = "ffprobe"
-    restart_delay_seconds: float = 5
-    max_restart_delay_seconds: float = 300
+    restart_delay_seconds: float = 2
+    max_restart_delay_seconds: float = 60
     segment_duration_seconds: int = 900
     watchdog_interval_seconds: float = 5
     file_stale_seconds: float = 120
     rtsp_timeout_seconds: int = 10
+    record_audio: bool = True
 
     # web server and authentication
     web_host: str = "0.0.0.0"

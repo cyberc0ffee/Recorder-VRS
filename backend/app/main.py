@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -92,9 +93,14 @@ def build_lifespan(settings: Settings) -> Callable[[FastAPI], AsyncIterator[None
         app.state.system_service = SystemService(storage_service, worker_manager)
 
         auth_service.ensure_admin()
-        reconcile_service.run()
-        cleanup_service.start_background()
+        # recording first: nothing below may delay or prevent it
         worker_manager.autostart()
+        worker_manager.start_supervisor()
+        try:
+            reconcile_service.run()
+        except Exception:  # noqa: BLE001 - the index is rebuilt at the next start
+            logging.getLogger("rtsp_recorder").exception("Startup reconcile failed")
+        cleanup_service.start_background()
         reconcile_service.start_background_probe()
         event_service.record("INFO", f"RTSP Recorder {VERSION} started")
 
@@ -165,6 +171,16 @@ def create_app(
     @app.get("/health", tags=["health"])
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/health/recording", tags=["health"])
+    def recording_health(response: Response) -> dict[str, int | str]:
+        """For external monitors (Uptime Kuma, Zabbix...): 503 while a camera that should be
+        recording is not. Public, like /health: it only returns two counters."""
+        counts = app.state.worker_manager.recording_health()
+        ok = counts["recording"] >= counts["expected"]
+        if not ok:
+            response.status_code = 503
+        return {"status": "ok" if ok else "degraded", **counts}
 
     if frontend_dist is not None and (frontend_dist / "index.html").is_file():
         _mount_frontend(app, frontend_dist)

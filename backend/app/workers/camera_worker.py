@@ -96,6 +96,7 @@ class CameraWorker:
         self._recording_since: float | None = None
         self._in_outage = False
         self._outage_started: float | None = None
+        self._finalizers: list[threading.Thread] = []
 
     # --- public API ----------------------------------------------------------------------
 
@@ -130,9 +131,7 @@ class CameraWorker:
             self._state.next_retry_at = None
             self._state.stopped_at = _now()
         if was_running:
-            self.event_service.record(
-                "INFO", f"Recording stopped for {self.camera.name}", self.camera.id
-            )
+            self._event("INFO", f"Recording stopped for {self.camera.name}")
 
     def is_running(self) -> bool:
         thread = self._thread
@@ -155,30 +154,47 @@ class CameraWorker:
     def _run(self) -> None:
         delay = float(self.settings.restart_delay_seconds)
         while not self._stop_event.is_set():
-            launched_at = time.time()
-            reason = self._watch(launched_at) if self._launch_process() else self._state.last_error
-            recorded_for = self._recorded_for()
-            self._finalize_current_file()
-            if self._stop_event.is_set():
-                break
-
-            if recorded_for >= STABLE_RUN_SECONDS:
-                delay = float(self.settings.restart_delay_seconds)
-            self._report_failure(reason or "ffmpeg stopped", recorded_for > 0)
-            retry_at = datetime.now(UTC) + timedelta(seconds=delay)
-            with self._lock:
-                self._state.state = "reconnecting"
-                self._state.online = False
-                self._state.recording = False
-                self._state.pid = None
-                self._state.restart_count += 1
-                self._state.next_retry_at = retry_at.isoformat()
-            logger.info("Restarting %s in %.0f s: %s", self.camera.name, delay, reason)
-            self._stop_event.wait(delay)
-            delay = min(delay * 2, float(self.settings.max_restart_delay_seconds))
-
+            try:
+                delay = self._run_once(delay)
+            except Exception:  # noqa: BLE001 - a bug or a database error must not end recording
+                logger.exception("Camera worker error for %s", self.camera.name)
+                self._terminate_process(timeout=5.0)
+                self._wait_before_retry(delay, "Internal error (see the application log)")
+                delay = self._next_delay(delay)
         self._terminate_process(timeout=5.0)
         self._finalize_current_file()
+        self._join_finalizers(timeout=30)
+
+    def _run_once(self, delay: float) -> float:
+        """One ffmpeg run and the wait before the next one; returns the next delay."""
+        launched_at = time.time()
+        reason = self._watch(launched_at) if self._launch_process() else self._state.last_error
+        recorded_for = self._recorded_for()
+        self._finalize_current_file()  # in the background: the restart does not wait for ffprobe
+        if self._stop_event.is_set():
+            return delay
+        if recorded_for >= STABLE_RUN_SECONDS:
+            delay = float(self.settings.restart_delay_seconds)
+        self._report_failure(reason or "ffmpeg stopped", recorded_for > 0)
+        self._wait_before_retry(delay, reason)
+        return self._next_delay(delay)
+
+    def _wait_before_retry(self, delay: float, reason: str | None) -> None:
+        retry_at = datetime.now(UTC) + timedelta(seconds=delay)
+        with self._lock:
+            self._state.state = "reconnecting"
+            self._state.online = False
+            self._state.recording = False
+            self._state.pid = None
+            self._state.restart_count += 1
+            self._state.next_retry_at = retry_at.isoformat()
+            if reason and not self._state.last_error:
+                self._state.last_error = redact(reason)
+        logger.info("Restarting %s in %.0f s: %s", self.camera.name, delay, reason)
+        self._stop_event.wait(delay)
+
+    def _next_delay(self, delay: float) -> float:
+        return min(delay * 2, float(self.settings.max_restart_delay_seconds))
 
     def _launch_process(self) -> bool:
         command = self.build_command(self.settings, self.camera, self.output_dir)
@@ -267,8 +283,11 @@ class CameraWorker:
                 self._state.last_file_growth_at = _now()
             self._mark_recording()
             if time.monotonic() - self._last_index >= INDEX_INTERVAL_SECONDS:
-                self.recording_service.index_file(self.camera.id, newest)
                 self._last_index = time.monotonic()
+                try:  # the database is only an index: recording goes on without it
+                    self.recording_service.index_file(self.camera.id, newest)
+                except Exception:  # noqa: BLE001
+                    logger.exception("Cannot index %s", newest.name)
             return None
 
         if stale_for > self.settings.file_stale_seconds:
@@ -287,15 +306,9 @@ class CameraWorker:
         self._recording_since = time.monotonic()
         if self._in_outage:
             down_for = int(time.monotonic() - (self._outage_started or time.monotonic()))
-            self.event_service.record(
-                "INFO",
-                f"Recording resumed for {self.camera.name} after {down_for} s",
-                self.camera.id,
-            )
+            self._event("INFO", f"Recording resumed for {self.camera.name} after {down_for} s")
         else:
-            self.event_service.record(
-                "INFO", f"Recording started for {self.camera.name}", self.camera.id
-            )
+            self._event("INFO", f"Recording started for {self.camera.name}")
         self._in_outage = False
         self._outage_started = None
 
@@ -308,9 +321,13 @@ class CameraWorker:
         self._in_outage = True
         self._outage_started = time.monotonic()
         prefix = "Recording interrupted" if was_recording else "Cannot record"
-        self.event_service.record(
-            "WARNING", f"{prefix} for {self.camera.name}: {reason}; retrying", self.camera.id
-        )
+        self._event("WARNING", f"{prefix} for {self.camera.name}: {reason}; retrying")
+
+    def _event(self, level: str, message: str) -> None:
+        try:  # a failing database must not stop the worker
+            self.event_service.record(level, message, self.camera.id)
+        except Exception:  # noqa: BLE001
+            logger.exception("Cannot store event: %s", message)
 
     def _recorded_for(self) -> float:
         # until the last growth: the stale period before the watchdog kills ffmpeg is not recording
@@ -319,41 +336,79 @@ class CameraWorker:
         return max(0.0, self._last_growth - self._recording_since)
 
     def _finalize_current_file(self) -> None:
-        """Writes size and duration of the segment that has just been closed."""
+        """Stores size and duration of the segment that has just been closed.
+
+        ffprobe may take seconds on a large segment: it runs in its own thread, so neither
+        the watchdog nor a restart of ffmpeg waits for it.
+        """
         current = self.active_file()
         if current is None:
             return
         with self._lock:
             self._state.current_file = None
+        thread = threading.Thread(
+            target=self._finalize_file,
+            args=(current,),
+            name=f"finalize-{self.camera.id}",
+            daemon=True,
+        )
+        self._finalizers = [t for t in self._finalizers if t.is_alive()] + [thread]
+        thread.start()
+
+    def _finalize_file(self, path: Path) -> None:
         try:
-            empty = current.stat().st_size == 0
-        except OSError:
+            if path.stat().st_size == 0:
+                # segment opened just before ffmpeg stopped: nothing to keep
+                path.unlink(missing_ok=True)
+                self.recording_service.delete_by_filename(str(path.resolve()))
+                return
+            self.recording_service.index_file(self.camera.id, path, self.probe(self.settings, path))
+        except FileNotFoundError:
             return
-        if empty:
-            # segment opened just before ffmpeg stopped: nothing to keep
-            current.unlink(missing_ok=True)
-            self.recording_service.delete_by_filename(str(current.resolve()))
-            return
-        if current.exists():
-            self.recording_service.index_file(
-                self.camera.id, current, self.probe(self.settings, current)
-            )
+        except Exception:  # noqa: BLE001 - the reconcile at startup indexes it later
+            logger.exception("Cannot finalize %s", path.name)
+
+    def _join_finalizers(self, timeout: float) -> None:
+        deadline = time.monotonic() + timeout
+        for thread in list(self._finalizers):
+            thread.join(timeout=max(0.0, deadline - time.monotonic()))
 
     # --- process and log handling --------------------------------------------------------
 
     def _pump_stderr(self, process: subprocess.Popen[bytes]) -> None:
-        """Copies ffmpeg output to the camera log, without credentials."""
+        """Copies ffmpeg output to the camera log, without credentials.
+
+        The pipe is always drained, even when the log cannot be written (disk full,
+        read-only): a full pipe would block ffmpeg and stop the recording.
+        """
         if process.stderr is None:
             return
-        with self.ffmpeg_log_path.open("ab") as log_file:
+        log_file = None
+        try:
             for raw_line in process.stderr:
                 line = redact(raw_line.decode("utf-8", "replace")).strip()
                 if not line:
                     continue
-                log_file.write(f"{_now()} {line}\n".encode())
-                log_file.flush()
                 with self._lock:
                     self._state.last_ffmpeg_message = line[:500]
+                try:
+                    if log_file is None:
+                        log_file = self.ffmpeg_log_path.open("ab")
+                    log_file.write(f"{_now()} {line}\n".encode())
+                    log_file.flush()
+                    if log_file.tell() > FFMPEG_LOG_MAX_BYTES:  # ffmpeg may run for weeks
+                        log_file.close()
+                        log_file = None
+                        self._rotate_ffmpeg_log()
+                except OSError:
+                    if log_file is not None:
+                        log_file.close()
+                    log_file = None
+        except (OSError, ValueError):
+            pass  # pipe closed while ffmpeg is being terminated
+        finally:
+            if log_file is not None:
+                log_file.close()
 
     def _join_stderr(self) -> None:
         thread = self._stderr_thread

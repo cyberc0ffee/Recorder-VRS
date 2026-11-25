@@ -24,6 +24,13 @@ def recorder_environment() -> dict[str, str]:
     return {**os.environ, "TZ": "UTC0"}
 
 
+def _stream_maps(settings: Settings) -> list[str]:
+    maps = ["-map", "0:v"]
+    if settings.record_audio:
+        maps += ["-map", "0:a?"]  # "?": cameras without audio are fine
+    return maps
+
+
 def build_ffmpeg_command(settings: Settings, camera: Camera, output_dir: Path) -> list[str]:
     output_pattern = build_segment_pattern(camera, output_dir)
     return [
@@ -40,8 +47,8 @@ def build_ffmpeg_command(settings: Settings, camera: Camera, output_dir: Path) -
         str(settings.rtsp_timeout_seconds * 1_000_000),
         "-i",
         camera.rtsp_url,
-        "-map",
-        "0",
+        # video and audio only: data tracks (ONVIF metadata) make the MKV header fail
+        *_stream_maps(settings),
         "-c",
         "copy",
         "-f",
